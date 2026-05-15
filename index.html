@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>1학년 8반 학생 관리</title>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <style>
     @font-face {
       font-family: "Paperlogy";
@@ -960,6 +961,54 @@
       text-align: center;
     }
 
+    .login-screen {
+      min-height: calc(100vh - 132px);
+      display: grid;
+      place-items: center;
+      padding: 112px 20px 56px;
+    }
+
+    .login-card {
+      width: min(520px, 100%);
+      padding: 36px;
+      background: var(--paper);
+      box-shadow: var(--stone-inset), var(--shadow-soft);
+      border-radius: var(--radius-modal);
+      text-align: center;
+    }
+
+    .login-card svg {
+      width: 86px;
+      height: 86px;
+      margin-bottom: 16px;
+      overflow: visible;
+    }
+
+    .login-card h1 {
+      margin: 0;
+      color: var(--deep);
+      font-family: var(--family);
+      font-size: 44px;
+      font-weight: 500;
+      line-height: 1.12;
+      letter-spacing: -1.14px;
+    }
+
+    .login-card p {
+      margin: 14px auto 24px;
+      color: var(--body);
+      font-size: 15px;
+      line-height: 1.65;
+    }
+
+    .login-error {
+      min-height: 20px;
+      margin-top: 14px;
+      color: var(--coral);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
     @keyframes bob {
       0%, 100% { transform: translateY(0) rotate(0deg); }
       45% { transform: translateY(-8px) rotate(-2deg); }
@@ -1231,6 +1280,28 @@
 
   <main class="page" id="app" tabindex="-1"></main>
 
+  <section class="login-screen" id="loginScreen" hidden>
+    <div class="login-card">
+      <svg viewBox="0 0 96 96" aria-hidden="true"><use href="#blob-orange"></use></svg>
+      <h1>1학년 8반</h1>
+      <p>학생 관리 사이트를 사용하려면 Google 계정으로 로그인하세요.</p>
+      <div id="g_id_onload"
+        data-client_id="1050997448113-b4oh78kc2raddk9h4fjrqbmiito67set.apps.googleusercontent.com"
+        data-callback="handleGoogleLogin"
+        data-auto_prompt="false">
+      </div>
+      <div class="g_id_signin"
+        data-type="standard"
+        data-size="large"
+        data-theme="outline"
+        data-text="signin_with"
+        data-shape="pill"
+        data-logo_alignment="left">
+      </div>
+      <div class="login-error" id="loginError" aria-live="polite"></div>
+    </div>
+  </section>
+
   <div class="modal-root" id="modalRoot" hidden></div>
 
   <footer class="site-footer">© 1학년 8반 학생 관리 · 만든 사람: 박선생님</footer>
@@ -1251,6 +1322,9 @@
 
     const app = document.getElementById('app');
     const modalRoot = document.getElementById('modalRoot');
+    const loginScreen = document.getElementById('loginScreen');
+    const loginError = document.getElementById('loginError');
+    const GOOGLE_TOKEN_KEY = 'teacherStudentGoogleCredential';
     const today = new Date();
     const todayLabel = new Intl.DateTimeFormat('ko-KR', {
       month: 'long',
@@ -1258,6 +1332,35 @@
       weekday: 'long'
     }).format(today);
     document.getElementById('todayLabel').textContent = todayLabel;
+
+    function isLoggedIn() {
+      return Boolean(sessionStorage.getItem(GOOGLE_TOKEN_KEY));
+    }
+
+    function showLogin() {
+      app.hidden = true;
+      loginScreen.hidden = false;
+    }
+
+    function showApp() {
+      loginScreen.hidden = true;
+      app.hidden = false;
+    }
+
+    window.handleGoogleLogin = function handleGoogleLogin(response) {
+      if (!response || !response.credential) {
+        loginError.textContent = 'Google 로그인 응답을 확인하지 못했습니다.';
+        return;
+      }
+
+      sessionStorage.setItem(GOOGLE_TOKEN_KEY, response.credential);
+      showApp();
+
+      if (state.isLoading && state.students.length === 0) {
+        render();
+        loadStudents();
+      }
+    };
 
     function escapeHtml(value) {
       return String(value)
@@ -1949,8 +2052,13 @@
       }
     });
 
-    render();
-    loadStudents();
+    if (isLoggedIn()) {
+      showApp();
+      render();
+      loadStudents();
+    } else {
+      showLogin();
+    }
   </script>
 </body>
 </html>

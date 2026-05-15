@@ -1325,6 +1325,7 @@
     const loginScreen = document.getElementById('loginScreen');
     const loginError = document.getElementById('loginError');
     const GOOGLE_TOKEN_KEY = 'teacherStudentGoogleCredential';
+    const GOOGLE_USER_KEY = 'teacherStudentGoogleUser';
     const today = new Date();
     const todayLabel = new Intl.DateTimeFormat('ko-KR', {
       month: 'long',
@@ -1333,8 +1334,14 @@
     }).format(today);
     document.getElementById('todayLabel').textContent = todayLabel;
 
-    function isLoggedIn() {
-      return Boolean(sessionStorage.getItem(GOOGLE_TOKEN_KEY));
+    function authHeaders() {
+      const credential = sessionStorage.getItem(GOOGLE_TOKEN_KEY);
+      return credential ? { Authorization: `Bearer ${credential}` } : {};
+    }
+
+    function clearLogin() {
+      sessionStorage.removeItem(GOOGLE_TOKEN_KEY);
+      sessionStorage.removeItem(GOOGLE_USER_KEY);
     }
 
     function showLogin() {
@@ -1347,18 +1354,35 @@
       app.hidden = false;
     }
 
-    window.handleGoogleLogin = function handleGoogleLogin(response) {
+    async function verifyLogin(credential) {
+      const result = await requestJson(['/api/auth', '/.netlify/functions/auth'], {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ credential })
+      });
+
+      sessionStorage.setItem(GOOGLE_TOKEN_KEY, credential);
+      sessionStorage.setItem(GOOGLE_USER_KEY, JSON.stringify(result.user || {}));
+      return result;
+    }
+
+    window.handleGoogleLogin = async function handleGoogleLogin(response) {
       if (!response || !response.credential) {
         loginError.textContent = 'Google 로그인 응답을 확인하지 못했습니다.';
         return;
       }
 
-      sessionStorage.setItem(GOOGLE_TOKEN_KEY, response.credential);
-      showApp();
+      loginError.textContent = '관리자 승인 여부를 확인하는 중입니다.';
 
-      if (state.isLoading && state.students.length === 0) {
+      try {
+        await verifyLogin(response.credential);
+        showApp();
         render();
         loadStudents();
+      } catch (error) {
+        clearLogin();
+        showLogin();
+        loginError.textContent = error.message || '관리자 승인을 확인하지 못했습니다.';
       }
     };
 
@@ -1469,7 +1493,11 @@
 
       for (const url of candidates) {
         try {
-          const response = await fetch(url, options);
+          const headers = new Headers(options.headers || {});
+          for (const [key, value] of Object.entries(authHeaders())) {
+            if (!headers.has(key)) headers.set(key, value);
+          }
+          const response = await fetch(url, { ...options, headers });
           const text = await response.text();
           let data = {};
 
@@ -2052,13 +2080,26 @@
       }
     });
 
-    if (isLoggedIn()) {
-      showApp();
-      render();
-      loadStudents();
-    } else {
-      showLogin();
+    async function boot() {
+      const credential = sessionStorage.getItem(GOOGLE_TOKEN_KEY);
+      if (!credential) {
+        showLogin();
+        return;
+      }
+
+      try {
+        await verifyLogin(credential);
+        showApp();
+        render();
+        loadStudents();
+      } catch (error) {
+        clearLogin();
+        showLogin();
+        loginError.textContent = error.message || '다시 Google 계정으로 로그인해 주세요.';
+      }
     }
+
+    boot();
   </script>
 </body>
 </html>

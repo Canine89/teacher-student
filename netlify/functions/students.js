@@ -1,5 +1,6 @@
 const SHEET_ID = process.env.GOOGLE_SHEET_ID || '11HHSbLyNWPKeZdFbS89uulmfBbcE7O64Xxh6IswNdhI';
 const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'students';
+const { requireApproved } = require('../../lib/auth');
 
 function json(statusCode, payload) {
   return {
@@ -97,8 +98,11 @@ function studentsFromCsv(text) {
   }).filter((student) => student.id && student.name);
 }
 
-exports.handler = async () => {
+exports.handler = async (event) => {
   try {
+    const auth = await requireApproved(event.headers);
+    if (!auth.ok) return json(auth.statusCode, { error: auth.error, user: auth.user, role: auth.role });
+
     const url = new URL(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq`);
     url.searchParams.set('tqx', 'out:csv');
     url.searchParams.set('sheet', SHEET_NAME);

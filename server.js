@@ -1,6 +1,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { requireApproved, verifyApprovedCredential } = require('./lib/auth');
 
 const PORT = Number(process.env.PORT || 9876);
 const ROOT = __dirname;
@@ -167,6 +168,12 @@ async function fetchSheetStudents() {
 
 async function handleStudents(request, response) {
   try {
+    const auth = await requireApproved(request.headers);
+    if (!auth.ok) {
+      sendJson(response, auth.statusCode, { error: auth.error, user: auth.user, role: auth.role });
+      return;
+    }
+
     const students = await fetchSheetStudents();
     sendJson(response, 200, {
       students,
@@ -177,13 +184,50 @@ async function handleStudents(request, response) {
   }
 }
 
+async function handleAuth(request, response) {
+  try {
+    const payload = JSON.parse(await readRequestBody(request) || '{}');
+    const result = await verifyApprovedCredential(payload.credential);
+
+    if (!result.approved) {
+      sendJson(response, 403, {
+        approved: false,
+        role: result.role,
+        user: result.user,
+        error: `${result.user.email} 계정은 아직 관리자 승인을 받지 않았습니다.`
+      });
+      return;
+    }
+
+    sendJson(response, 200, {
+      approved: true,
+      role: result.role,
+      user: result.user
+    });
+  } catch (error) {
+    sendJson(response, 401, { approved: false, error: error.message || 'Google 로그인을 확인하지 못했습니다.' });
+  }
+}
+
 async function handleSaveStudentNote(request, response) {
+  const auth = await requireApproved(request.headers);
+  if (!auth.ok) {
+    sendJson(response, auth.statusCode, { error: auth.error, user: auth.user, role: auth.role });
+    return;
+  }
+
   sendJson(response, 501, {
     error: '구글 스프레드시트 저장은 아직 연결되지 않았습니다. 화면에는 세션 메모로 저장됩니다.'
   });
 }
 
 async function handleCounselingNote(request, response) {
+  const auth = await requireApproved(request.headers);
+  if (!auth.ok) {
+    sendJson(response, auth.statusCode, { error: auth.error, user: auth.user, role: auth.role });
+    return;
+  }
+
   if (!process.env.OPENAI_API_KEY) {
     sendJson(response, 500, {
       error: 'OPENAI_API_KEY 환경변수가 없습니다. 서버를 API 키와 함께 다시 실행해 주세요.'
@@ -280,6 +324,11 @@ function serveStatic(request, response) {
 }
 
 const server = http.createServer((request, response) => {
+  if (request.method === 'POST' && request.url === '/api/auth') {
+    handleAuth(request, response);
+    return;
+  }
+
   if (request.method === 'GET' && request.url === '/api/students') {
     handleStudents(request, response);
     return;

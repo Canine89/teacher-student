@@ -1,4 +1,5 @@
 const MODEL = 'gpt-4.1-mini';
+const { requireApproved } = require('../../lib/auth');
 
 function json(statusCode, payload) {
   return {
@@ -25,6 +26,9 @@ function extractResponseText(data) {
 
 exports.handler = async (event) => {
   if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
+
+  const auth = await requireApproved(event.headers);
+  if (!auth.ok) return json(auth.statusCode, { error: auth.error, user: auth.user, role: auth.role });
 
   if (!process.env.OPENAI_API_KEY) {
     return json(500, {

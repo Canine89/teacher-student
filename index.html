@@ -1360,11 +1360,38 @@
       state.selectedStudentId = null;
     }
 
+    async function requestJson(urls, options = {}) {
+      const candidates = Array.isArray(urls) ? urls : [urls];
+      let lastError = null;
+
+      for (const url of candidates) {
+        try {
+          const response = await fetch(url, options);
+          const text = await response.text();
+          let data = {};
+
+          try {
+            data = text ? JSON.parse(text) : {};
+          } catch (error) {
+            throw new Error(`JSON 응답이 아닙니다: ${text.slice(0, 80)}`);
+          }
+
+          if (!response.ok) {
+            throw new Error(data.error || `${url} ${response.status}`);
+          }
+
+          return data;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      throw lastError || new Error('요청에 실패했습니다.');
+    }
+
     async function loadStudents() {
       try {
-        const response = await fetch('/api/students', { cache: 'no-store' });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || `학생 데이터 ${response.status}`);
+        const result = await requestJson(['/api/students', '/.netlify/functions/students'], { cache: 'no-store' });
         if (!Array.isArray(result.students) || result.students.length === 0) {
           throw new Error('구글 스프레드시트에 학생 데이터가 없습니다.');
         }
@@ -1849,7 +1876,7 @@
       status.textContent = '상담 기록 초안을 만드는 중입니다.';
 
       try {
-        const response = await fetch('/api/counseling-note', {
+        const result = await requestJson(['/api/counseling-note', '/.netlify/functions/counseling-note'], {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1864,9 +1891,6 @@
             prompt
           })
         });
-
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || '초안 생성에 실패했습니다.');
 
         memoInput.value = result.note;
         status.textContent = '초안을 만들었습니다. 표현을 확인한 뒤 저장하세요.';
@@ -1892,7 +1916,7 @@
       button.disabled = true;
 
       try {
-        const response = await fetch('/api/student-note', {
+        await requestJson(['/api/student-note', '/.netlify/functions/student-note'], {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1902,19 +1926,12 @@
           })
         });
 
-        const result = await response.json().catch(() => ({}));
-
         state.notes[state.selectedStudentId].unshift({
           date: savedAt,
           content
         });
         renderModal();
         if (state.activeTab === 'dashboard') render();
-
-        if (!response.ok) {
-          const status = modalRoot.querySelector('#aiStatus');
-          if (status) status.textContent = result.error || '화면에는 저장했지만 구글 스프레드시트에는 반영되지 않았습니다.';
-        }
       } catch (error) {
         state.notes[state.selectedStudentId].unshift({
           date: savedAt,

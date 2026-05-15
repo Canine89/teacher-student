@@ -1,0 +1,3 @@
+/api/students /.netlify/functions/students 200
+/api/counseling-note /.netlify/functions/counseling-note 200
+/api/student-note /.netlify/functions/student-note 200

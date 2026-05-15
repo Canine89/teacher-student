@@ -5,6 +5,8 @@ const path = require('path');
 const PORT = Number(process.env.PORT || 9876);
 const ROOT = __dirname;
 const MODEL = 'gpt-4.1-mini';
+const SHEET_ID = process.env.GOOGLE_SHEET_ID || '11HHSbLyNWPKeZdFbS89uulmfBbcE7O64Xxh6IswNdhI';
+const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'students';
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -106,50 +108,79 @@ function stringifyCsv(rows) {
   }).join(',')).join('\n') + '\n';
 }
 
-async function handleSaveStudentNote(request, response) {
-  try {
-    const payload = JSON.parse(await readRequestBody(request) || '{}');
-    const studentId = Number(payload.studentId);
-    const content = String(payload.content || '').replace(/\s+/g, ' ').trim();
-    const date = String(payload.date || '').trim();
+function normalizeGender(value) {
+  const gender = String(value || '').trim().toUpperCase();
+  if (gender === '남' || gender === 'M' || gender === 'MALE') return 'M';
+  if (gender === '여' || gender === 'F' || gender === 'FEMALE') return 'F';
+  return gender || 'M';
+}
 
-    if (!studentId || !content || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      sendJson(response, 400, { error: '저장할 상담 기록 정보를 확인해 주세요.' });
-      return;
-    }
+function parseNotesCell(value) {
+  return String(value || '')
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(\d{4}-\d{2}-\d{2})\s*\|\s*(.+)$/);
+      if (match) return { date: match[1], content: match[2].trim() };
+      return { date: new Date().toISOString().slice(0, 10), content: line };
+    });
+}
 
-    const csvPath = path.join(ROOT, 'students.csv');
-    const csvText = await fs.promises.readFile(csvPath, 'utf8');
-    const rows = parseCsv(csvText);
-    const header = rows[0] || [];
-    let noteIndex = header.indexOf('상담기록');
+function studentsFromCsv(text) {
+  const rows = parseCsv(text);
+  const header = rows.shift();
+  if (!header || rows.length === 0) return [];
 
-    if (noteIndex === -1) {
-      header.push('상담기록');
-      noteIndex = header.length - 1;
-    }
+  return rows.map((row) => {
+    const student = Object.fromEntries(header.map((column, index) => [column.trim(), (row[index] || '').trim()]));
+    const allergyText = student['알레르기/특이사항'] || student.allergies || '';
+    return {
+      id: Number(student['번호'] || student.id),
+      name: student['이름'] || student.name,
+      gender: normalizeGender(student['성별'] || student.gender || ''),
+      birthday: student['생일'] || student.birthday,
+      guardian: student['보호자 연락처'] || student.guardian || '',
+      allergies: allergyText
+        ? allergyText.split(/[;|/·]/).map((item) => item.trim()).filter(Boolean)
+        : [],
+      notes: parseNotesCell(student['상담기록'] || '')
+    };
+  }).filter((student) => student.id && student.name);
+}
 
-    const idIndex = header.indexOf('번호');
-    if (idIndex === -1) {
-      sendJson(response, 500, { error: 'students.csv에 번호 컬럼이 없습니다.' });
-      return;
-    }
+async function fetchSheetStudents() {
+  const url = new URL(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq`);
+  url.searchParams.set('tqx', 'out:csv');
+  url.searchParams.set('sheet', SHEET_NAME);
 
-    const row = rows.slice(1).find((item) => Number(item[idIndex]) === studentId);
-    if (!row) {
-      sendJson(response, 404, { error: 'students.csv에서 학생을 찾지 못했습니다.' });
-      return;
-    }
-
-    while (row.length < header.length) row.push('');
-    const newEntry = `${date} | ${content}`;
-    row[noteIndex] = row[noteIndex] ? `${newEntry}\n${row[noteIndex]}` : newEntry;
-
-    await fs.promises.writeFile(csvPath, stringifyCsv(rows), 'utf8');
-    sendJson(response, 200, { ok: true, entry: { date, content } });
-  } catch (error) {
-    sendJson(response, 500, { error: error.message || '상담 기록 저장 중 오류가 발생했습니다.' });
+  const sheetResponse = await fetch(url, { cache: 'no-store' });
+  if (!sheetResponse.ok) {
+    throw new Error(`구글 스프레드시트를 읽지 못했습니다. (${sheetResponse.status})`);
   }
+
+  const csv = await sheetResponse.text();
+  const students = studentsFromCsv(csv);
+  if (students.length === 0) throw new Error('구글 스프레드시트에 학생 데이터가 없습니다.');
+  return students;
+}
+
+async function handleStudents(request, response) {
+  try {
+    const students = await fetchSheetStudents();
+    sendJson(response, 200, {
+      students,
+      source: `google-sheets:${SHEET_ID}/${SHEET_NAME}`
+    });
+  } catch (error) {
+    sendJson(response, 500, { error: error.message || '학생 데이터를 읽지 못했습니다.' });
+  }
+}
+
+async function handleSaveStudentNote(request, response) {
+  sendJson(response, 501, {
+    error: '구글 스프레드시트 저장은 아직 연결되지 않았습니다. 화면에는 세션 메모로 저장됩니다.'
+  });
 }
 
 async function handleCounselingNote(request, response) {
@@ -249,6 +280,11 @@ function serveStatic(request, response) {
 }
 
 const server = http.createServer((request, response) => {
+  if (request.method === 'GET' && request.url === '/api/students') {
+    handleStudents(request, response);
+    return;
+  }
+
   if (request.method === 'POST' && request.url === '/api/counseling-note') {
     handleCounselingNote(request, response);
     return;
